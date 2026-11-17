@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>工單序號掃描</title>
+<style>
+:root{
+  /* 版面：單欄。上方是「目前步驟」卡片，下方是本工單結果；掃描時以全螢幕相機畫面覆蓋。 */
+  --bg:#e9edf1; --surface:#ffffff; --ink:#16212c; --muted:#5a6876; --line:#cbd3db;
+  --accent:#0a5aa8; --accent-ink:#ffffff; --ok:#1b7742; --warn:#a85600; --field:#f4f6f8;
+  --body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+  --mono:"Roboto Mono","Noto Sans Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#10161c; --surface:#1a232c; --ink:#e7edf2; --muted:#98a6b3; --line:#34424f;
+    --accent:#5aa9f0; --accent-ink:#06121d; --ok:#58c98a; --warn:#f0a94e; --field:#121a21;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.5}
+main{max-width:520px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+h1{font-size:20px;margin:0;font-weight:700}
+h2{font-size:14px;margin:0;font-weight:500;color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.steps{display:flex;gap:6px}
+.steps span{flex:1;text-align:center;font-size:13px;padding:5px 0;border-radius:6px;border:1px solid var(--line);color:var(--muted)}
+.steps span.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
+.steps span.past{border-color:var(--ok);color:var(--ok)}
+.now{font-size:22px;font-weight:700}
+.sub{font-size:14px;color:var(--muted)}
+.code{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+button{font:inherit;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);min-height:52px;padding:10px 14px;font-weight:500;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700;font-size:18px;min-height:60px}
+button.small{min-height:40px;padding:6px 12px;font-size:14px}
+button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+button:disabled{opacity:.5}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row>button{flex:1 1 140px}
+input[type=text]{font-family:var(--mono);font-size:20px;width:100%;padding:12px;border-radius:8px;border:1px solid var(--line);background:var(--field);color:var(--ink);min-width:0}
+.big input[type=text]{font-size:24px;font-weight:600;text-align:center}
+.thumb{width:100%;border-radius:8px;background:var(--field);border:1px solid var(--line)}
+.note{font-size:14px;font-weight:500}
+.note.ok{color:var(--ok)} .note.warn{color:var(--warn)}
+.group{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center}
+.group .no{font-size:13px;color:var(--muted);width:2.2em}
+.group .pair{display:flex;flex-direction:column;gap:6px;min-width:0}
+.group input[type=text]{font-size:16px;padding:8px 10px}
+pre{margin:0;padding:12px;background:var(--field);border:1px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:15px;white-space:pre-wrap;word-break:break-all;min-height:3em;user-select:all}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:999px;font-weight:700;opacity:0;pointer-events:none;transition:opacity .2s;z-index:30}
+.toast.show{opacity:1}
+[hidden]{display:none!important}
+
+/* 掃描畫面 */
+#scan{position:fixed;inset:0;background:#000;color:#fff;display:flex;flex-direction:column;z-index:20}
+#view{position:relative;flex:1;overflow:hidden}
+#vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform-origin:center}
+#box{position:absolute;left:6%;right:6%;top:50%;transform:translateY(-50%);aspect-ratio:5/1;border:3px solid #fff;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.5)}
+#box.hit{border-color:#58c98a}
+#scanTop{position:absolute;left:0;right:0;top:0;padding:14px 16px;font-weight:700;font-size:18px;text-shadow:0 1px 3px #000}
+#scanTop small{display:block;font-weight:400;font-size:14px;opacity:.9}
+#scanBar{padding:12px 16px 18px;display:flex;flex-direction:column;gap:10px;background:#0c1116}
+#live{font-family:var(--mono);font-size:20px;min-height:1.5em;text-align:center;word-break:break-all}
+#scanMsg{font-size:14px;text-align:center;color:#c9d3dc;min-height:1.4em}
+#scanBar button{background:#1c2630;border-color:#3a4855;color:#fff}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>工單序號掃描</h1>
+    <button class="small" id="btnNew">新工單</button>
+  </header>
+
+  <div class="card" id="clearBar" hidden>
+    <div>要清除目前這張工單的內容嗎？</div>
+    <div class="row"><button id="btnClearYes">清除</button><button id="btnClearNo">取消</button></div>
+  </div>
+
+  <section class="card" id="stepCard" aria-live="polite"></section>
+
+  <section class="card">
+    <h2>本工單內容（可直接點欄位修改）</h2>
+    <div id="list"></div>
+    <h2>輸出文字</h2>
+    <pre id="out" class="code"></pre>
+    <button id="btnCopy">複製文字</button>
+  </section>
+  <div class="sub" id="engine">辨識元件載入中…</div>
+</main>
+
+<div id="scan" hidden>
+  <div id="view">
+    <video id="vid" playsinline muted autoplay></video>
+    <div id="box"></div>
+    <div id="scanTop"><span id="scanTitle"></span><small id="scanHint"></small></div>
+  </div>
+  <div id="scanBar">
+    <div id="live"></div>
+    <div id="scanMsg"></div>
+    <div class="row">
+      <button id="btnZoom">倍率 2x</button>
+      <button id="btnTorch" hidden>補光</button>
+      <button id="btnUse">用目前讀到的</button>
+      <button id="btnScanCancel">取消</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script>
+(function(){
+"use strict";
+var AZ="ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+var KIND={
+  work:{label:"工單號碼",re:/^A\d{9}$/,hint:"A＋9 位數字",need:3,chan:"gray",wl:"A0123456789",
+    guide:"把「組裝單號」的號碼放進框內"},
+  slide:{label:"滑台號碼",re:/^00000\d{7}(-\d+)?$/,hint:"00000 開頭共 12 位數字，可能有 -流水號",need:2,chan:"red",wl:"0123456789-",
+    guide:"把 C/N 那一行放進框內"},
+  motor:{label:"馬達號碼",re:/^[A-Z0-9]{10}$/,hint:"10 個英數字（日期左邊那串）",need:2,chan:"red",wl:AZ+"0123456789/ ",
+    guide:"把序號和右邊的日期（yyyy/mm）一起放進框內"}
+};
+var STORE="wo-scan-v1", ZKEY="wo-scan-zoom";
+var state={work:"",groups:[],cur:null,step:"work",done:false};
+var pending=null;
+
+try{var s=JSON.parse(localStorage.getItem(STORE)||"null");if(s&&s.groups){state=s;}}catch(e){}
+function save(){try{localStorage.setItem(STORE,JSON.stringify(state));}catch(e){}}
+
+var $=function(id){return document.getElementById(id);};
+function esc(t){return String(t==null?"":t).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function norm(v){return String(v||"").toUpperCase().replace(/\s+/g,"").replace(/[－—–]/g,"-");}
+function toast(t){var el=$("toast");el.textContent=t;el.classList.add("show");setTimeout(function(){el.classList.remove("show");},1800);}
+
+/* ---------- 從辨識文字中找出號碼 ---------- */
+function parse(kind,text){
+  var T=String(text||"").toUpperCase(),lines=T.split(/\n+/),i,m,l;
+  if(kind==="work"){
+    m=T.replace(/\s+/g,"").match(/A(\d{9})(?!\d)/);
+    return m?"A"+m[1]:"";
+  }
+  if(kind==="slide"){
+    for(i=0;i<lines.length;i++){
+      l=lines[i].replace(/\s+/g,"");
+      m=l.match(/(00000\d{7})(?:-?(\d{1,2}))?(?!\d)/);
+      if(m)return m[1]+(m[2]?"-"+m[2]:"");
+    }
+    return "";
+  }
+  for(i=0;i<lines.length;i++){
+    m=lines[i].match(/^(.*?)20\d{2}\s?\/\s?(0[1-9]|1[0-2])/);
+    if(m){l=m[1].replace(/[^A-Z0-9]/g,"");if(l.length>=10)return l.slice(-10);}
+  }
+  return "";
+}
+window.__parse=parse;
+
+/* ---------- 主畫面 ---------- */
+function outputText(){
+  var lines=[];
+  if(state.work)lines.push(state.work);
+  state.groups.forEach(function(g){lines.push(g.slide+")"+g.motor);});
+  return lines.join("\n");
+}
+function noteFor(kind,value){
+  var v=norm(value);
+  if(!v)return{cls:"warn",text:"沒有讀到號碼，請重掃或直接輸入。"};
+  if(!KIND[kind].re.test(v))return{cls:"warn",text:"格式不符（應為 "+KIND[kind].hint+"），請核對。"};
+  var dup=false;
+  if(kind==="slide")dup=state.groups.some(function(g){return g.slide===v;});
+  if(kind==="motor")dup=state.groups.some(function(g){return g.motor===v;});
+  if(dup)return{cls:"warn",text:"這個號碼在本工單已經出現過，請確認沒有重複掃。"};
+  return{cls:"ok",text:"格式正確，請對照實物確認。"};
+}
+function renderStep(){
+  var el=$("stepCard"),k=state.step,n=state.groups.length+1,h="";
+  h+='<div class="steps">';
+  ["work","slide","motor"].forEach(function(o){
+    var cls=(o===k&&!state.done)?"on":((o==="work"&&state.work)?"past":"");
+    h+='<span class="'+cls+'">'+(o==="work"?"工單":o==="slide"?"滑台":"馬達")+'</span>';
+  });
+  h+='</div>';
+  if(state.done){
+    h+='<div class="now">這張工單已完成</div><div class="sub">文字已複製，可以貼到其他地方。共 '+state.groups.length+' 組。</div>';
+    h+='<div class="row"><button class="primary" data-act="new">開始下一張工單</button><button data-act="resume">回去繼續加</button></div>';
+    el.innerHTML=h;return;
+  }
+  if(pending){
+    var pk=pending.kind;
+    h+='<div class="now">'+(pk==="work"?"":"第 "+n+" 組　")+KIND[pk].label+'</div>';
+    if(pending.thumb)h+='<img class="thumb" alt="擷取到的畫面" src="'+pending.thumb+'">';
+    var nt=pending.err?{cls:"warn",text:pending.err}:noteFor(pk,pending.value);
+    h+='<div class="big"><input type="text" id="pval" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="'+KIND[pk].label+'" value="'+esc(pending.value)+'"></div>';
+    h+='<div class="note '+nt.cls+'" id="pnote">'+esc(nt.text)+'</div>';
+    if(pk==="work")h+='<div class="row"><button class="primary" data-act="ok-cam">正確，掃滑台</button></div>';
+    if(pk==="slide")h+='<div class="row"><button class="primary" data-act="ok-cam">正確，掃馬達</button></div>';
+    if(pk==="motor")h+='<div class="row"><button class="primary" data-act="ok-cam">正確，下一組</button><button class="primary" data-act="ok-finish">正確，結束並複製</button></div>';
+    h+='<div class="row"><button data-act="retake">重掃</button><button data-act="cancel">取消</button></div>';
+    el.innerHTML=h;return;
+  }
+  h+='<div class="now">'+(k==="work"?"":"第 "+n+" 組　")+KIND[k].label+'</div>';
+  if(k==="motor"&&state.cur)h+='<div class="sub">滑台：<span class="code">'+esc(state.cur)+'</span></div>';
+  h+='<div class="sub">對準號碼，讀到後會自動回到這裡讓你確認。</div>';
+  h+='<div class="row"><button class="primary" data-act="cam">掃'+KIND[k].label+'</button></div>';
+  h+='<div class="row"><button data-act="manual">手動輸入</button>';
+  if(k==="slide"&&state.groups.length>0)h+='<button data-act="finish">結束並複製</button>';
+  h+='</div>';
+  el.innerHTML=h;
+}
+function renderList(){
+  var h="";
+  h+='<div class="group"><span class="no">工單</span><div class="pair"><input type="text" id="f-work" data-f="work" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="工單號碼" placeholder="尚未掃工單" value="'+esc(state.work)+'"></div><span></span></div>';
+  state.groups.forEach(function(g,i){
+    h+='<div class="group" style="margin-top:10px"><span class="no">'+(i+1)+'</span><div class="pair">'+
+      '<input type="text" id="f-s'+i+'" data-i="'+i+'" data-f="slide" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="第 '+(i+1)+' 組滑台" value="'+esc(g.slide)+'">'+
+      '<input type="text" id="f-m'+i+'" data-i="'+i+'" data-f="motor" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="第 '+(i+1)+' 組馬達" value="'+esc(g.motor)+'">'+
+      '</div><button class="small" data-del="'+i+'" aria-label="刪除第 '+(i+1)+' 組">刪除</button></div>';
+  });
+  $("list").innerHTML=h;
+  renderOut();
+}
+function renderOut(){$("out").textContent=outputText()||"（尚無內容）";}
+function render(){renderStep();renderList();}
+
+/* ---------- 辨識元件 ---------- */
+var worker=null,workerReady=null;
+function initWorker(){
+  if(workerReady)return workerReady;
+  if(!window.Tesseract){$("engine").textContent="辨識元件載入失敗，請確認網路後重新整理。仍可手動輸入。";return Promise.reject(new Error("no engine"));}
+  workerReady=Tesseract.createWorker("eng",1).then(function(w){
+    worker=w;$("engine").textContent="辨識元件已就緒（在手機內辨識，照片不會上傳）。";return w;
+  });
+  workerReady.catch(function(){workerReady=null;$("engine").textContent="辨識元件載入失敗，請確認網路後重新整理。仍可手動輸入。";});
+  return workerReady;
+}
+
+/* ---------- 相機掃描 ---------- */
+var vid=$("vid"),stream=null,track=null,caps={},scanning=false,scanKind="work",scanId=0;
+var zoomWant=2,hwZoom=false,dz=1,torchOn=false,lastRaw="",lastCrop=null;
+try{var zs=parseFloat(localStorage.getItem(ZKEY));if(zs===1||zs===2||zs===3)zoomWant=zs;}catch(e){}
+var work=document.createElement("canvas"),snap=document.createElement("canvas");
+
+function applyZoom(){
+  $("btnZoom").textContent="倍率 "+zoomWant+"x";
+  if(hwZoom&&track){
+    var z=Math.min(Math.max(zoomWant,caps.zoom.min),caps.zoom.max);
+    dz=1;vid.style.transform="";
+    track.applyConstraints({advanced:[{zoom:z}]}).catch(function(){hwZoom=false;applyZoom();});
+  }else{dz=zoomWant;vid.style.transform="scale("+dz+")";}
+}
+function stopCam(){
+  scanning=false;scanId++;
+  if(stream){stream.getTracks().forEach(function(t){try{t.stop();}catch(e){}});}
+  stream=null;track=null;vid.srcObject=null;torchOn=false;
+  $("scan").hidden=true;
+}
+function camError(e){
+  stopCam();
+  var n=e&&e.name,msg="無法開啟相機，請改用手動輸入。";
+  if(n==="NotAllowedError")msg="相機權限被拒絕。請到 Chrome 網站設定允許相機，或改用手動輸入。";
+  else if(n==="NotFoundError")msg="找不到相機。";
+  else if(!navigator.mediaDevices)msg="這個網址無法使用相機（需要 https 網址）。";
+  pending={kind:scanKind,value:"",thumb:"",err:msg};renderStep();
+}
+function startScan(kind){
+  scanKind=kind;lastRaw="";lastCrop=null;
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){camError(null);return;}
+  var my=++scanId;
+  $("scanTitle").textContent=KIND[kind].label;$("scanHint").textContent=KIND[kind].guide;
+  $("live").textContent="";$("scanMsg").textContent="開啟相機中…";$("box").classList.remove("hit");
+  $("scan").hidden=false;
+  navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}}}).then(function(st){
+    if(my!==scanId){st.getTracks().forEach(function(t){t.stop();});return;}
+    stream=st;track=st.getVideoTracks()[0];
+    caps=(track.getCapabilities&&track.getCapabilities())||{};
+    hwZoom=!!(caps.zoom&&caps.zoom.max>=2);
+    if(caps.focusMode&&caps.focusMode.indexOf("continuous")>=0)track.applyConstraints({advanced:[{focusMode:"continuous"}]}).catch(function(){});
+    $("btnTorch").hidden=!caps.torch;
+    vid.srcObject=st;applyZoom();
+    return vid.play().catch(function(){}).then(function(){
+      scanning=true;$("scanMsg").textContent=worker?"對準號碼，保持穩定…":"辨識元件載入中，請稍候…";
+      return initWorker();
+    }).then(function(){if(my===scanId)loop(my);});
+  }).catch(function(e){if(my===scanId){if(stream){$("scanMsg").textContent="辨識元件無法載入，請取消後手動輸入。";}else camError(e);}});
+}
+function grab(kind){
+  var vw=vid.videoWidth,vh=vid.videoHeight;if(!vw||!vh)return false;
+  var vr=$("view").getBoundingClientRect(),br=$("box").getBoundingClientRect();
+  var sc=Math.max(vr.width/vw,vr.height/vh)*dz;
+  var sw=br.width/sc,sh=br.height/sc;
+  var cx=vw/2+((br.left+br.width/2)-(vr.left+vr.width/2))/sc;
+  var cy=vh/2+((br.top+br.height/2)-(vr.top+vr.height/2))/sc;
+  var W=900,H=Math.round(W*sh/sw);
+  snap.width=W;snap.height=H;
+  snap.getContext("2d").drawImage(vid,cx-sw/2,cy-sh/2,sw,sh,0,0,W,H);
+  work.width=W;work.height=H;
+  var ctx=work.getContext("2d",{willReadFrequently:true});
+  ctx.drawImage(snap,0,0);
+  var im=ctx.getImageData(0,0,W,H),d=im.data,i,v,lo=255,hi=0,red=KIND[kind].chan==="red";
+  for(i=0;i<d.length;i+=4){v=red?d[i]:(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114);d[i]=v;if(v<lo)lo=v;if(v>hi)hi=v;}
+  var k=255/Math.max(1,hi-lo);
+  for(i=0;i<d.length;i+=4){v=(d[i]-lo)*k;d[i]=d[i+1]=d[i+2]=v;}
+  ctx.putImageData(im,0,0);
+  return true;
+}
+function loop(my){
+  var kind=scanKind,last="",count=0,t0=Date.now();
+  worker.setParameters({tessedit_char_whitelist:KIND[kind].wl,tessedit_pageseg_mode:"6"}).then(function step(){
+    if(my!==scanId||!scanning)return;
+    if(!grab(kind)){setTimeout(step,150);return;}
+    worker.recognize(work).then(function(r){
+      if(my!==scanId||!scanning)return;
+      var raw=(r&&r.data&&r.data.text||"").trim(),v=parse(kind,raw);
+      lastRaw=raw;
+      if(v){
+        count=(v===last)?count+1:1;last=v;
+        $("live").textContent=v;$("box").classList.add("hit");
+        $("scanMsg").textContent="讀到了，再確認一次…（"+count+"/"+KIND[kind].need+"）";
+        if(count>=KIND[kind].need){finishScan(v);return;}
+      }else{
+        count=0;last="";$("box").classList.remove("hit");
+        $("live").textContent=raw.replace(/\s+/g," ").slice(0,40);
+        $("scanMsg").textContent=(Date.now()-t0>9000)?"還讀不到：調整距離、角度或避開反光，也可以取消改手動輸入。":"對準號碼，保持穩定…";
+      }
+      setTimeout(step,80);
+    }).catch(function(){if(my===scanId&&scanning)setTimeout(step,300);});
+  });
+}
+function finishScan(v,errMsg){
+  var thumb="";try{thumb=snap.toDataURL("image/jpeg",0.8);}catch(e){}
+  try{if(navigator.vibrate)navigator.vibrate(60);}catch(e){}
+  var kind=scanKind;stopCam();
+  pending={kind:kind,value:v,thumb:thumb,err:errMsg||""};renderStep();
+}
+$("btnZoom").addEventListener("click",function(){
+  zoomWant=zoomWant===2?3:(zoomWant===3?1:2);
+  try{localStorage.setItem(ZKEY,String(zoomWant));}catch(e){}
+  applyZoom();
+});
+$("btnTorch").addEventListener("click",function(){
+  if(!track)return;torchOn=!torchOn;
+  track.applyConstraints({advanced:[{torch:torchOn}]}).catch(function(){});
+});
+$("btnUse").addEventListener("click",function(){
+  var v=parse(scanKind,lastRaw)||norm(lastRaw.split(/\n/)[0]||"").slice(0,24);
+  finishScan(v,v?"這是未經重複確認的讀取結果，請仔細核對。":"");
+});
+$("btnScanCancel").addEventListener("click",function(){stopCam();renderStep();});
+document.addEventListener("visibilitychange",function(){if(document.hidden&&!$("scan").hidden){stopCam();renderStep();}});
+
+/* ---------- 確認、複製 ---------- */
+function accept(next){
+  var inp=$("pval"),v=norm(inp?inp.value:"");
+  if(!v){var nt=$("pnote");if(nt){nt.className="note warn";nt.textContent="請先輸入號碼，或按重掃。";}return;}
+  var k=pending.kind;
+  if(k==="work"){state.work=v;state.step="slide";}
+  else if(k==="slide"){state.cur=v;state.step="motor";}
+  else{state.groups.push({slide:state.cur||"",motor:v});state.cur=null;state.step="slide";}
+  pending=null;save();
+  if(next==="finish"){finish();return;}
+  render();
+  if(next==="cam")startScan(state.step);
+}
+function copyText(t){
+  function fallback(){
+    try{
+      var ta=document.createElement("textarea");ta.value=t;ta.style.position="fixed";ta.style.opacity="0";
+      document.body.appendChild(ta);ta.select();var ok=document.execCommand("copy");document.body.removeChild(ta);
+      toast(ok?"已複製":"無法自動複製，請長按輸出文字複製");
+    }catch(e){toast("無法自動複製，請長按輸出文字複製");}
+  }
+  try{
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).then(function(){toast("已複製");},fallback);
+    }else fallback();
+  }catch(e){fallback();}
+}
+function finish(){
+  var t=outputText();if(!t){toast("還沒有內容");return;}
+  copyText(t);state.done=true;save();render();
+}
+function reset(){
+  state={work:"",groups:[],cur:null,step:"work",done:false};pending=null;save();
+  $("clearBar").hidden=true;render();
+}
+$("stepCard").addEventListener("click",function(ev){
+  var b=ev.target.closest("button[data-act]");if(!b)return;
+  var a=b.getAttribute("data-act");
+  if(a==="cam")startScan(state.step);
+  else if(a==="manual"){pending={kind:state.step,value:"",thumb:"",err:"請輸入號碼。"};renderStep();var i=$("pval");if(i)i.focus();}
+  else if(a==="retake"){var k=pending.kind;pending=null;startScan(k);}
+  else if(a==="cancel"){pending=null;renderStep();}
+  else if(a==="ok-cam")accept("cam");
+  else if(a==="ok-finish")accept("finish");
+  else if(a==="finish")finish();
+  else if(a==="new")reset();
+  else if(a==="resume"){state.done=false;save();render();}
+});
+$("stepCard").addEventListener("input",function(ev){
+  if(ev.target.id!=="pval"||!pending)return;
+  pending.value=ev.target.value;pending.err="";
+  var nt=noteFor(pending.kind,pending.value),el=$("pnote");
+  if(el){el.className="note "+nt.cls;el.textContent=nt.text;}
+});
+$("list").addEventListener("input",function(ev){
+  var t=ev.target,f=t.getAttribute("data-f");if(!f)return;
+  var v=norm(t.value);
+  if(f==="work")state.work=v;else{var g=state.groups[+t.getAttribute("data-i")];if(g)g[f]=v;}
+  save();renderOut();
+});
+$("list").addEventListener("click",function(ev){
+  var b=ev.target.closest("button[data-del]");if(!b)return;
+  state.groups.splice(+b.getAttribute("data-del"),1);save();render();
+});
+$("btnCopy").addEventListener("click",function(){var t=outputText();if(t)copyText(t);else toast("還沒有內容");});
+$("btnNew").addEventListener("click",function(){
+  if(state.done||(!state.work&&!state.groups.length&&!state.cur)){reset();return;}
+  $("clearBar").hidden=false;
+});
+$("btnClearYes").addEventListener("click",reset);
+$("btnClearNo").addEventListener("click",function(){$("clearBar").hidden=true;});
+
+render();
+initWorker().catch(function(){});
+})();
+</script>
+</body>
+</html>
